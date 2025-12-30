@@ -3,9 +3,37 @@ import { ApiStatus } from "../../constants/index.js";
 import { generateFileId, jsonOk } from "../../utils/common.js";
 import { MountManager } from "../../storage/managers/MountManager.js";
 import { FileSystem } from "../../storage/fs/FileSystem.js";
-import { invalidateFsCache } from "../../cache/invalidation.js";
 import { getEncryptionSecret } from "../../utils/environmentUtils.js";
 import { usePolicy } from "../../security/policies/policies.js";
+import { findUploadSessionById } from "../../utils/uploadSessions.js";
+import { validateFsItemName } from "../../storage/fs/utils/FsInputValidator.js";
+
+const toAbsoluteUrlIfRelative = (requestUrl, maybeUrl) => {
+  if (typeof maybeUrl !== "string" || maybeUrl.length === 0) {
+    return maybeUrl;
+  }
+  if (!maybeUrl.startsWith("/")) {
+    return maybeUrl;
+  }
+  const origin = new URL(requestUrl).origin;
+  return new URL(maybeUrl, origin).toString();
+};
+
+const ensureAbsoluteSessionUploadUrl = (c, payload) => {
+  const session = payload?.session;
+  const uploadUrl = session?.uploadUrl;
+  const absolute = toAbsoluteUrlIfRelative(c.req.url, uploadUrl);
+  if (!session || absolute === uploadUrl) {
+    return payload;
+  }
+  return {
+    ...payload,
+    session: {
+      ...session,
+      uploadUrl: absolute,
+    },
+  };
+};
 
 const parseJsonBody = async (c, next) => {
   const body = await c.req.json();
@@ -52,6 +80,12 @@ export const registerMultipartRoutes = (router, helpers) => {
     return { db: c.env.DB, encryptionSecret: getEncryptionSecret(c), repositoryFactory: c.get("repos"), userInfo, userIdOrInfo, userType };
   };
 
+  const assertValidFileName = (fileName) => {
+    const result = validateFsItemName(fileName);
+    if (result.valid) return;
+    throw new ValidationError(result.message);
+  };
+
   router.post("/api/fs/multipart/init", parseJsonBody, usePolicy("fs.upload", { pathResolver: jsonPathResolver() }), async (c) => {
     const { db, encryptionSecret, repositoryFactory, userIdOrInfo, userType } = requireUserContext(c);
     const body = c.get("jsonBody");
@@ -61,11 +95,21 @@ export const registerMultipartRoutes = (router, helpers) => {
       throw new ValidationError("缺少必要参数");
     }
 
-    const mountManager = new MountManager(db, encryptionSecret, repositoryFactory);
-    const fileSystem = new FileSystem(mountManager);
-    const result = await fileSystem.initializeFrontendMultipartUpload(path, fileName, fileSize, userIdOrInfo, userType, partSize, partCount);
+    assertValidFileName(fileName);
 
-    return jsonOk(c, result, "前端分片上传初始化成功");
+    const mountManager = new MountManager(db, encryptionSecret, repositoryFactory, { env: c.env });
+    const fileSystem = new FileSystem(mountManager);
+    const result = await fileSystem.initializeFrontendMultipartUpload(
+      path,
+      fileName,
+      fileSize,
+      userIdOrInfo,
+      userType,
+      partSize,
+      partCount,
+    );
+
+    return jsonOk(c, ensureAbsoluteSessionUploadUrl(c, result), "前端分片上传初始化成功");
   });
 
   router.post("/api/fs/multipart/complete", parseJsonBody, usePolicy("fs.upload", { pathResolver: jsonPathResolver() }), async (c) => {
@@ -77,7 +121,11 @@ export const registerMultipartRoutes = (router, helpers) => {
       throw new ValidationError("缺少必要参数");
     }
 
-    const mountManager = new MountManager(db, encryptionSecret, repositoryFactory);
+    if (fileName) {
+      assertValidFileName(fileName);
+    }
+
+    const mountManager = new MountManager(db, encryptionSecret, repositoryFactory, { env: c.env });
     const fileSystem = new FileSystem(mountManager);
   const result = await fileSystem.completeFrontendMultipartUpload(path, uploadId, parts, fileName, fileSize, userIdOrInfo, userType);
 
@@ -93,7 +141,9 @@ export const registerMultipartRoutes = (router, helpers) => {
       throw new ValidationError("缺少必要参数");
     }
 
-    const mountManager = new MountManager(db, encryptionSecret, repositoryFactory);
+    assertValidFileName(fileName);
+
+    const mountManager = new MountManager(db, encryptionSecret, repositoryFactory, { env: c.env });
     const fileSystem = new FileSystem(mountManager);
     await fileSystem.abortFrontendMultipartUpload(path, uploadId, fileName, userIdOrInfo, userType);
 
@@ -105,7 +155,7 @@ export const registerMultipartRoutes = (router, helpers) => {
     const body = c.get("jsonBody");
     const { path = "" } = body;
 
-    const mountManager = new MountManager(db, encryptionSecret, repositoryFactory);
+    const mountManager = new MountManager(db, encryptionSecret, repositoryFactory, { env: c.env });
     const fileSystem = new FileSystem(mountManager);
     const result = await fileSystem.listMultipartUploads(path, userIdOrInfo, userType);
 
@@ -121,7 +171,9 @@ export const registerMultipartRoutes = (router, helpers) => {
       throw new ValidationError("缺少必要参数");
     }
 
-    const mountManager = new MountManager(db, encryptionSecret, repositoryFactory);
+    assertValidFileName(fileName);
+
+    const mountManager = new MountManager(db, encryptionSecret, repositoryFactory, { env: c.env });
     const fileSystem = new FileSystem(mountManager);
     const result = await fileSystem.listMultipartParts(path, uploadId, fileName, userIdOrInfo, userType);
 
@@ -137,11 +189,82 @@ export const registerMultipartRoutes = (router, helpers) => {
       throw new ValidationError("缺少必要参数");
     }
 
-    const mountManager = new MountManager(db, encryptionSecret, repositoryFactory);
+    const mountManager = new MountManager(db, encryptionSecret, repositoryFactory, { env: c.env });
     const fileSystem = new FileSystem(mountManager);
     const result = await fileSystem.refreshMultipartUrls(path, uploadId, partNumbers, userIdOrInfo, userType);
 
-    return jsonOk(c, result, "刷新分片上传预签名URL成功");
+    return jsonOk(c, ensureAbsoluteSessionUploadUrl(c, result), "刷新分片上传预签名URL成功");
+  });
+
+  // 前端分片上传中转端点（single_session 场景）
+  // 当前主要用于 GOOGLE_DRIVE：前端使用 Uppy + AwsS3 在浏览器中切片，
+  // 每个分片通过该端点中转到后端，再由后端转发至 Google Drive resumable 会话。
+  router.put("/api/fs/multipart/upload-chunk", usePolicy("fs.upload", { pathCheck: false }), async (c) => {
+    const { db, encryptionSecret, repositoryFactory, userIdOrInfo, userType } = requireUserContext(c);
+
+    const uploadId = c.req.query("upload_id");
+    if (!uploadId) {
+      throw new ValidationError("缺少 upload_id 参数");
+    }
+
+    const body = c.req.raw?.body;
+    if (!body) {
+      throw new ValidationError("请求体为空");
+    }
+
+    const contentRange = c.req.header("content-range") || c.req.header("Content-Range") || null;
+    if (!contentRange) {
+      throw new ValidationError("缺少 Content-Range 头部");
+    }
+
+    const contentLengthHeader = c.req.header("content-length") || c.req.header("Content-Length") || null;
+    const contentLength = contentLengthHeader ? Number.parseInt(contentLengthHeader, 10) || 0 : 0;
+
+    const sessionRow = await findUploadSessionById(db, { id: uploadId });
+    if (!sessionRow) {
+      throw new ValidationError("未找到对应的上传会话");
+    }
+
+    const mountManager = new MountManager(db, encryptionSecret, repositoryFactory, { env: c.env });
+    const fileSystem = new FileSystem(mountManager);
+
+    const { driver, mount } = await fileSystem.mountManager.getDriverByPath(
+      sessionRow.fs_path,
+      userIdOrInfo,
+      userType,
+    );
+
+    if (String(driver.getType()) !== String(sessionRow.storage_type)) {
+      throw new ValidationError("上传会话对应的驱动类型与会话记录不一致");
+    }
+
+    if (typeof driver.proxyFrontendMultipartChunk !== "function") {
+      throw new ValidationError("当前上传会话的存储类型不支持通过该端点上传分片");
+    }
+
+    // 委托给 driver 自己实现“分片中转”
+    // - GoogleDrive：后端转发到 Google Drive resumable session
+    // - Telegram：后端上传该分片到 Telegram，并写入 upload_parts
+    // @ts-ignore
+    const result = await driver.proxyFrontendMultipartChunk(sessionRow, /** @type {any} */ (body), {
+      contentRange,
+      contentLength,
+      mount,
+      db,
+      userIdOrInfo,
+      userType,
+    });
+
+    return jsonOk(
+      c,
+      {
+        success: true,
+        done: result?.done === true,
+        status: result?.status ?? 200,
+        skipped: result?.skipped === true,
+      },
+      "分片上传成功",
+    );
   });
 
   router.post("/api/fs/presign", parseJsonBody, usePolicy("fs.upload", { pathResolver: presignTargetResolver }), async (c) => {
@@ -153,9 +276,11 @@ export const registerMultipartRoutes = (router, helpers) => {
       throw new ValidationError("请提供上传路径和文件名");
     }
 
+    assertValidFileName(fileName);
+
     const targetPath = presignTargetResolver(c);
 
-    const mountManager = new MountManager(db, encryptionSecret, repositoryFactory);
+    const mountManager = new MountManager(db, encryptionSecret, repositoryFactory, { env: c.env });
     const { mount } = await mountManager.getDriverByPath(path, userIdOrInfo, userType);
 
     if (!mount || !mount.storage_config_id) {
@@ -163,7 +288,7 @@ export const registerMultipartRoutes = (router, helpers) => {
     }
 
     const fileSystem = new FileSystem(mountManager);
-    const result = await fileSystem.generatePresignedUrl(targetPath, userIdOrInfo, userType, {
+    const result = await fileSystem.generateUploadUrl(targetPath, userIdOrInfo, userType, {
       operation: "upload",
       fileName,
       fileSize,
@@ -172,15 +297,19 @@ export const registerMultipartRoutes = (router, helpers) => {
 
     const fileId = generateFileId();
 
-  return jsonOk(c, {
+    return jsonOk(
+      c,
+      {
         presignedUrl: result.uploadUrl,
         fileId,
         storagePath: result.storagePath,
         publicUrl: result.publicUrl || null,
         mountId: mount.id,
         storageConfigId: mount.storage_config_id,
+        storageType: mount.storage_type || null,
         targetPath,
         contentType: result.contentType,
+        headers: result.headers || undefined,
       },
       { success: true },
     );
@@ -200,8 +329,12 @@ export const registerMultipartRoutes = (router, helpers) => {
     }
 
     const fileName = targetPath.split("/").filter(Boolean).pop();
+    if (!fileName) {
+      throw new ValidationError("无效的目标路径：缺少文件名");
+    }
+    assertValidFileName(fileName);
 
-    const mountManager = new MountManager(db, encryptionSecret, repositoryFactory);
+    const mountManager = new MountManager(db, encryptionSecret, repositoryFactory, { env: c.env });
     const fileSystem = new FileSystem(mountManager);
 
     // 使用 FileSystem 对齐目录标记与缓存逻辑
@@ -210,9 +343,6 @@ export const registerMultipartRoutes = (router, helpers) => {
       etag,
       contentType,
     });
-
-    // 同时触发目录缓存失效（冗余保护，确保一致性）
-    invalidateFsCache({ mountId, reason: "presign-commit", db });
 
     return jsonOk(c, { ...result, publicUrl: result.publicUrl || null, fileName, targetPath, fileSize }, "文件上传完成");
   });

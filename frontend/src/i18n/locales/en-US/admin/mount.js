@@ -14,6 +14,12 @@ export default {
       disabled: "Disabled",
       proxy: "Proxy",
       signature: "Signature",
+      proxySign: "Proxy/Sign",
+      folderSummary: "Compute",
+    },
+    viewMode: {
+      grid: "Grid View",
+      list: "List View",
     },
     info: {
       name: "Mount Name",
@@ -28,12 +34,26 @@ export default {
       updatedAt: "Updated At",
       lastRefresh: "Last Refresh",
     },
+
+    // Schema group titles (for dynamic form layout)
+    groups: {
+      basic: "Basic Information",
+      storage: "Storage Association",
+      advanced: "Advanced Settings",
+      proxy: "Proxy Settings",
+      proxySign: "Proxy Signature Settings",
+      status: "Status",
+    },
+
     form: {
       name: "Mount Point Name",
       namePlaceholder: "Enter mount point name",
       nameHint: "Name to identify the mount point",
       storageType: "Storage Type",
       storageTypeHint: "Select storage backend type",
+      selectStorageType: "Please select a storage type",
+      selectStorageTypeFirst: "Please select a storage type first",
+      noConfigsForType: "No storage configurations available for this type",
       storageConfig: "Storage Configuration",
       storageConfigPlaceholder: "Select storage configuration",
       storageConfigHint: "Choose the storage configuration to use",
@@ -47,6 +67,8 @@ export default {
       sortOrderHint: "Lower numbers appear first",
       cacheTtl: "Cache TTL (seconds)",
       cacheTtlHint: "File list cache time, 0 means no cache",
+      enableFolderSummaryCompute: "Allow folder size/time compute (fallback)",
+      enableFolderSummaryComputeHint: "After activation: When the storage itself does not provide raw data and there is no index, it will recursively traverse and compute.",
       isActive: "Active Status",
       isActiveHint: "Whether to enable this mount point",
       webProxy: "Enable Web Proxy",
@@ -72,9 +94,10 @@ export default {
       },
       webdavPolicyOptions: {
         "302_redirect": "302 Redirect",
+        use_proxy_url: "Proxy URL",
         native_proxy: "Native Proxy",
       },
-      webdavPolicyDescription: "Download/Preview for WebDAV",
+      webdavPolicyDescription: "Only applies to download/preview operations when the project is mounted as WebDAV.",
       cacheTtlPlaceholder: "Default 300 seconds",
       sortOrderPlaceholder: "0",
       save: "Save",
@@ -124,6 +147,13 @@ export default {
       saveFailed: "Save failed",
     },
     validation: {
+      // Generic validation messages (for Schema-driven forms)
+      required: "{field} is required",
+      maxLength: "Maximum length cannot exceed {max} characters",
+      invalidFormat: "Invalid format",
+      min: "Cannot be less than {min}",
+      max: "Cannot be greater than {max}",
+      // Field-specific validation messages
       nameRequired: "Mount point name is required",
       nameLength: "Mount point name must be between 1-50 characters",
       storageTypeRequired: "Please select a storage type",
@@ -132,6 +162,8 @@ export default {
       mountPathFormat: "Mount path must start with /",
       mountPathInvalid: "Mount path format is invalid, must be in /xxx format, only letters, numbers, underscores, hyphens, Chinese characters and slashes are allowed",
       mountPathSystemReserved: "Cannot use system reserved paths",
+      namePattern: "Name can only contain Chinese, letters, numbers, underscores and hyphens",
+      mountPathPattern: "Mount path format is invalid",
       cacheTTLInteger: "Cache TTL must be an integer",
       cacheTTLNonNegative: "Cache TTL cannot be negative",
       cacheTTLTooLarge: "Cache TTL cannot exceed 86400 seconds (24 hours)",

@@ -16,7 +16,7 @@ const emitMountCacheInvalidation = ({ mountId, storageConfigId = null, reason, d
 
 /**
  * 挂载点服务类
- * 职责：纯粹的挂载点业务逻辑，通过Repository访问数据
+ * 纯粹的挂载点业务逻辑，通过Repository访问数据
  */
 class MountService {
   /**
@@ -131,6 +131,7 @@ class MountService {
     const webdavPolicy = mountData.webdav_policy || "302_redirect";
     const enableSign = mountData.enable_sign || false;
     const signExpires = mountData.sign_expires !== undefined ? mountData.sign_expires : null;
+    const enableFolderSummaryCompute = mountData.enable_folder_summary_compute || false;
 
     // 准备数据
     const createData = {
@@ -148,6 +149,7 @@ class MountService {
       webdav_policy: webdavPolicy,
       enable_sign: enableSign,
       sign_expires: signExpires,
+      enable_folder_summary_compute: enableFolderSummaryCompute,
     };
 
     // 创建挂载点

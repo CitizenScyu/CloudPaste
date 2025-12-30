@@ -16,7 +16,7 @@ import * as mountService from "./services/mountService";
 import * as systemService from "./services/systemService";
 import * as urlUploadService from "./services/urlUploadService";
 import * as fsService from "./services/fsService";
-import * as fileViewService from "./services/fileViewService";
+import * as fsIndexService from "./services/fsIndexService";
 
 // 统一服务导出 - 按功能模块重新组织
 export const api = {
@@ -36,9 +36,6 @@ export const api = {
     batchDeleteFiles: fileService.batchDeleteFiles,
     getMaxUploadSize: systemService.getMaxUploadSize,
   },
-
-  // 文件分享查看相关（包含预览功能）
-  fileView: fileViewService,
 
   // 存储配置相关
   storage: {
@@ -81,6 +78,8 @@ export const api = {
     createApiKey: authService.createApiKey,
     deleteApiKey: authService.deleteApiKey,
     updateApiKey: authService.updateApiKey,
+    getApiKeyStorageAcl: authService.getApiKeyStorageAcl,
+    updateApiKeyStorageAcl: authService.updateApiKeyStorageAcl,
 
     // 文本分享管理（统一接口）
     getPastes: pasteService.getPastes,
@@ -107,7 +106,6 @@ export const api = {
     // 文件系统管理 - 使用统一API
     getDirectoryList: fsService.getDirectoryList,
     getFileInfo: fsService.getFileInfo,
-    getFileDownloadUrl: fsService.getFileDownloadUrl,
     getFileLink: fsService.getFileLink,
     createDirectory: fsService.createDirectory,
     uploadFile: fsService.uploadFile,
@@ -116,7 +114,9 @@ export const api = {
     updateFile: fsService.updateFile,
     // 复制相关
     batchCopyItems: fsService.batchCopyItems,
-    commitBatchCopy: fsService.commitBatchCopy,
+
+    // 索引管理
+    fsIndex: fsIndexService,
   },
 
   test: {
@@ -145,7 +145,6 @@ export const api = {
     fs: {
       getDirectoryList: fsService.getDirectoryList,
       getFileInfo: fsService.getFileInfo,
-      getFileDownloadUrl: fsService.getFileDownloadUrl,
       getFileLink: fsService.getFileLink,
       createDirectory: fsService.createDirectory,
       uploadFile: fsService.uploadFile,
@@ -154,17 +153,15 @@ export const api = {
       updateFile: fsService.updateFile,
       // 复制相关
       batchCopyItems: fsService.batchCopyItems,
-      commitBatchCopy: fsService.commitBatchCopy,
       // 分享相关
       createShareFromFileSystem: fsService.createShareFromFileSystem,
     },
 
-    // API密钥用户的URL上传服务
+    // API密钥用户的URL上传服务（仅负责URL元信息和内容拉取）
     urlUpload: {
       validateUrlInfo: urlUploadService.validateUrlInfo,
       getProxyUrl: urlUploadService.getProxyUrl,
-      getUrlUploadPresignedUrl: urlUploadService.getUrlUploadPresignedUrl,
-      commitUrlUpload: urlUploadService.commitUrlUpload,
+      fetchUrlContent: urlUploadService.fetchUrlContent,
     },
 
     // API密钥用户的系统服务
